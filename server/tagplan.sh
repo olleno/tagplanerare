@@ -7,6 +7,7 @@ set -u
 SELF_URL="https://raw.githubusercontent.com/olleno/tagplanerare/main/server/tagplan.sh"
 SE_URL="https://raw.githubusercontent.com/olleno/tagplanerare/main/data/sverige-gtfs.zip"
 D=/opt/tagplan
+PORT=8100   # 8080 används av tradingagenten på samma server
 mkdir -p $D/in $D/kod $D/logg
 exec >>$D/logg/tagplan.log 2>&1
 echo "=== $(date -Is) start ($1)"
@@ -43,7 +44,7 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload; systemctl enable -q tagplan
   echo "17 * * * * root $D/kod/tagplan.sh cron" > /etc/cron.d/tagplan
-  if command -v ufw >/dev/null && ufw status | grep -q active; then ufw allow 8080/tcp; fi
+  if command -v ufw >/dev/null && ufw status | grep -q active; then ufw allow $PORT/tcp; fi
 }
 
 write_filter() {
@@ -81,6 +82,12 @@ out.close()
 PY
 }
 
+set_port() {  # set_port <data-mapp>: sökmotorn lyssnar på $PORT
+  [ -f "$1/config.yml" ] || return 0
+  sed -i '/^server:/,/^[^ ]/{/^server:/d;/^  /d}' "$1/config.yml"
+  printf 'server:\n  host: 0.0.0.0\n  port: %s\n' "$PORT" >> "$1/config.yml"
+}
+
 fetch() {  # fetch <namn> <url>  – behåller gårdagens fil om nedladdningen misslyckas
   if curl -fsSL --retry 3 -A "tagplaneraren (olle@nordwikpartners.se)" -o $D/in/$1.tmp "$2" && unzip -tq $D/in/$1.tmp >/dev/null; then
     mv $D/in/$1.tmp $D/in/$1.zip; echo "hämtad: $1"
@@ -101,13 +108,14 @@ build() {
   sed -i 's/num_days: 365/num_days: 21/; s/with_shapes: true/with_shapes: false/; s/railviz: true/railviz: false/; s/merge_dupes_inter_src: false/merge_dupes_inter_src: true/; s/extend_missing_footpaths: false/extend_missing_footpaths: true/; s/link_stop_distance: 100/link_stop_distance: 300/' config.yml
   systemctl stop tagplan   # frigör minne under bygget
   if $D/motis import -d data >/dev/null 2>&1 && [ -s data/tt.bin ]; then
+    set_port data
     rm -rf $D/old; [ -d $D/run ] && mv $D/run $D/old; mv $D/next $D/run; echo "nytt bygge klart"
   else echo "BYGGET MISSLYCKADES – kör vidare på förra"; fi
   systemctl start tagplan
 }
 
 case "$MODE" in
-  install) install_base; [ -s $D/run/data/tt.bin ] || build ;;
+  install) install_base; if [ -s $D/run/data/tt.bin ]; then set_port $D/run/data; systemctl restart tagplan; else build; fi ;;
   cron)    [ "$(date +%H)" = "03" ] && build ;;
   build)   build ;;
 esac
