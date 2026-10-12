@@ -67,8 +67,11 @@ def stream(n,keep):  # skriver raderna där keep(rad) är sant, utan att hålla 
 keep_r=set();keep_t=set();keep_s=set();stops=set()
 def f_routes(h):
     it=h.index('route_type');ir=h.index('route_id')
+    isn=h.index('route_short_name') if 'route_short_name' in h else None;ide=h.index('route_desc') if 'route_desc' in h else None
+    def ersatz(x):  # ersättningsbuss för tåg: Schweiz märker dem "EV", Tyskland "SEV"
+        return (ide is not None and x[ide].strip().upper()=='EV') or (isn is not None and x[isn].strip().upper().startswith('SEV'))
     def k(x):
-        if rail(x[it]): keep_r.add(x[ir]);return True
+        if rail(x[it]) or ersatz(x): keep_r.add(x[ir]);return True
     return k
 def f_trips(h):
     ir=h.index('route_id');itr=h.index('trip_id');isv=h.index('service_id')
