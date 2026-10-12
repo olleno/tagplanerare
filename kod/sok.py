@@ -73,7 +73,8 @@ def _hm(iso, tz): return _dag(P._loc(iso, tz))
 def _leg(l):
     return {"from": l["from"]["name"], "to": l["to"]["name"], "dep": _hm(l["startTime"], l["from"].get("tz")),
             "arr": _hm(l["endTime"], l["to"].get("tz")), "train": l.get("displayName") or "",
-            "agency": l.get("agencyName") or "", "mode": l["mode"]}
+            "agency": l.get("agencyName") or "", "url": l.get("agencyUrl") or "", "mode": l["mode"],
+            "day": P._loc(l["startTime"], l["from"].get("tz")).strftime("%Y-%m-%d")}
 
 def to_json(res):
     opts = []
@@ -86,7 +87,7 @@ def to_json(res):
         h = g["hotel"]
         opts.append({"kind": g["kind"], "dep": _dag(s), "arr": _dag(e),
                      "hours": round((e - s).total_seconds() / 3600, 1), "changes": len(L) - 1,
-                     "legs": [_leg(l) for l in L[: g["last"] + 1]], "tails": tails, "flags": g["flags"],
+                     "legs": [_leg(l) for l in L[: g["last"] + 1]], "all": [_leg(l) for l in L], "tails": tails, "flags": g["flags"],
                      "hotel": h and {"city": h["city"], "out": _dag(h["out"])}})
     return {"options": opts, "rejected": sorted(set(res["rejected"]))}
 
@@ -146,6 +147,7 @@ button{grid-column:1/-1;background:var(--acc);color:#fff;border:0;font-weight:60
 .kind.hotell{color:var(--hot)}.time{font-size:17px;font-weight:600}.meta{color:var(--mut);font-size:13px}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13.5px}td{padding:3px 6px 3px 0;vertical-align:top}td.t{white-space:nowrap;font-variant-numeric:tabular-nums}td.tr{color:var(--mut)}
 .hotel{color:var(--hot);font-weight:600;margin:4px 0}.tail{font-size:13px;margin-top:6px;color:var(--mut)}.flag{color:var(--warn);font-size:13px;margin-top:4px}
+.price{margin-top:8px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}.price a{color:var(--acc);border:1px solid var(--line);border-radius:6px;padding:3px 8px;text-decoration:none}.price a:hover{background:var(--bg)}
 .msg{margin-top:16px;color:var(--mut)}.rej{margin-top:18px;font-size:13px;color:var(--mut)}
 @media (max-width:560px){form{grid-template-columns:1fr}td.tr{display:none}}
 </style></head><body><main>
@@ -179,6 +181,18 @@ for(const k of['fran','till']){
   inp.addEventListener('blur',()=>setTimeout(()=>{if(items.length&&!pick[k])choose(0);items=[];show()},100));
 }
 $('#sw').onclick=()=>{[pick.fran,pick.till]=[pick.till,pick.fran];[$('#fran').value,$('#till').value]=[$('#till').value,$('#fran').value]};
+// Priser: SJ säljer biljetter för de här bolagen och visar dagens pris direkt i länken. Övriga bolag: deras egen sida.
+const SJ_SALJER=/^(SJ|Öresundståg|Skånetrafiken|Norrtåg|Mälartåg|Västtågen|Krösatågen|Tåg i Bergslagen)\b/i;
+const sjNamn=n=>n.replace(/\s+Centralstation$/,' Central').replace(/\s+C$/,' Central').replace(/^København H$/,'Köpenhamn H');
+function prisLankar(legs){
+  const out=[]; let i=0;
+  while(i<legs.length){
+    if(SJ_SALJER.test(legs[i].agency)){let j=i;while(j+1<legs.length&&SJ_SALJER.test(legs[j+1].agency))j++;
+      out.push({t:`${legs[i].from} → ${legs[j].to} hos SJ`,u:`https://www.sj.se/sok-resa/valj-resa/${encodeURIComponent(sjNamn(legs[i].from))}/${encodeURIComponent(sjNamn(legs[j].to))}/${legs[i].day}`});i=j+1}
+    else{if(legs[i].url&&!out.some(o=>o.u==legs[i].url))out.push({t:`${legs[i].agency}`,u:legs[i].url});i++}
+  }
+  return out.length?`<div class="price">Priser: ${out.map(o=>`<a href="${esc(o.u)}" target="_blank" rel="noopener">${esc(o.t)}</a>`).join('')}</div>`:'';
+}
 const legRow=l=>`<tr><td class="t">${esc(l.dep)}</td><td>${esc(l.from)} → ${esc(l.to)}</td><td class="t">${esc(l.arr)}</td><td class="tr">${esc(l.train)} ${esc(l.agency)}</td></tr>`;
 $('#f').onsubmit=async e=>{e.preventDefault();const out=$('#out');
   if(!pick.fran||!pick.till){out.innerHTML='<p class="msg">Välj station i listan för både Från och Till.</p>';return}
@@ -192,7 +206,7 @@ $('#f').onsubmit=async e=>{e.preventDefault();const out=$('#out');
       return `<div class="opt"><div class="head"><span class="kind ${o.kind}">${esc(o.kind)}</span><span class="time">${esc(o.dep)} → ${esc(o.arr)}</span>
         <span class="meta">${o.hours} h · ${o.changes} byten</span></div><table>${rows}</table>
         ${o.tails.map(t=>`<div class="tail">Sista biten: ${t.legs.map(l=>`${esc(l.dep.slice(-5))} ${esc(l.mode=='BUS'?'buss':l.mode=='REGIONAL_RAIL'?'regionaltåg':l.mode.toLowerCase())} ${esc(l.train)} till ${esc(l.to)}`).join(' + ')} → framme ${esc(t.arr.slice(-5))}</div>`).join('')}
-        ${o.flags.map(f=>`<div class="flag">OBS: ${esc(f)}</div>`).join('')}</div>`}).join('')
+        ${o.flags.map(f=>`<div class="flag">OBS: ${esc(f)}</div>`).join('')}${prisLankar(o.all)}</div>`}).join('')
       +(d.rejected.length?`<p class="rej">Bortsorterat: ${d.rejected.map(esc).join('; ')}</p>`:'');
   }catch(err){out.innerHTML=`<p class="msg">Något gick fel: ${esc(err.message)}</p>`}
   $('#go').disabled=false};
