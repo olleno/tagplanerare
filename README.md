@@ -13,4 +13,6 @@ Reseplanerare för tåg, regionaltåg och buss i Europa, dörr till dörr. Bygge
 - Italien: Trenitalia och STA Südtirol via BusOne
 - Österrike: ÖBB Open Data, GTFS Soll-Fahrplan (CC BY 4.0)
 - Schweiz: opentransportdata.swiss, Fahrplan GTFS
+- Frankrike: SNCF Voyageurs, TGV/Intercités/TER (ODbL)
+- Nederländerna: OVapi (gtfs.ovapi.nl)
 - Landsgränser: Natural Earth (public domain)

@@ -295,8 +295,8 @@ GTFS_DIR = sys.argv[1] if len(sys.argv) > 1 else "/opt/tagplan/in"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8110
 PW_FILE = sys.argv[3] if len(sys.argv) > 3 else "/opt/tagplan/sok.losen"
 PASSWORD = open(PW_FILE).read().strip() if os.path.exists(PW_FILE) else None
-DATASETS = ("se", "dk", "de", "it", "sta", "at", "ch")
-LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Italien", "at": "Österrike", "ch": "Schweiz"}
+DATASETS = ("se", "dk", "de", "it", "sta", "at", "ch", "fr", "nl")
+LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Italien", "at": "Österrike", "ch": "Schweiz", "fr": "Frankrike", "nl": "Nederländerna"}
 HOME_TZ = "Europe/Stockholm"
 HUB_WORDS = {"c", "central", "centralstation", "hbf", "hauptbahnhof", "h", "centrale", "termini", "hovedbanegard"}
 
@@ -584,7 +584,7 @@ footer{max-width:880px;margin:0 auto 30px;padding:0 16px;font-size:12px;color:va
 </form>
 <div id="out"></div>
 </main>
-<footer>Tidtabeller: Trafiklab/Samtrafiken, Rejseplanen, DELFI/gtfs.de, Trenitalia, STA, ÖBB, opentransportdata.swiss · Tider i lokal tid vid varje station</footer>
+<footer>Tidtabeller: Trafiklab/Samtrafiken, Rejseplanen, DELFI/gtfs.de, Trenitalia, STA, ÖBB, opentransportdata.swiss, SNCF (ODbL), OVapi · Tider i lokal tid vid varje station</footer>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pick={fran:null,till:null}; let last=null, sortBy='arr';
@@ -736,11 +736,13 @@ build() {
   Y=$(date +%Y); [ "$(date +%m%d)" -ge 1213 ] && Y=$((Y+1))
   fetch at-full "https://static.web.oebb.at/open-data/soll-fahrplan-gtfs/GTFS_Fahrplan_$Y.zip"
   fetch ch-full "https://data.opentransportdata.swiss/dataset/timetable-$Y-gtfs2020/permalink"
+  fetch fr-full https://eu.ftp.opendatasoft.com/sncf/plandata/Export_OpenData_SNCF_GTFS_NewTripId.zip   # SNCF: TGV, Intercités, TER (ODbL)
+  fetch nl-full http://gtfs.ovapi.nl/nl/gtfs-nl.zip                                                   # Nederländerna via OVapi
   if [ -s $D/trafiklab.key ]; then fetch se "https://api.resrobot.se/gtfs/sweden.zip?key=$(cat $D/trafiklab.key)"; else fetch se "$SE_URL"; fi
   [ $D/in/de-full.zip -nt $D/in/de.zip ] && python3 $D/kod/filt.py $D/in/de-full.zip $D/in/de.zip && echo "Tyskland filtrerad"
-  for f in at ch; do [ $D/in/$f-full.zip -nt $D/in/$f.zip ] && nice python3 $D/kod/filt.py $D/in/$f-full.zip $D/in/$f.zip && echo "$f filtrerad"; done
+  for f in at ch fr nl; do [ $D/in/$f-full.zip -nt $D/in/$f.zip ] && nice python3 $D/kod/filt.py $D/in/$f-full.zip $D/in/$f.zip && echo "$f filtrerad"; done
   rm -rf $D/next && mkdir -p $D/next && cd $D/next
-  for f in se dk de it sta at ch; do [ -s $D/in/$f.zip ] && ln -sf $D/in/$f.zip $f.zip; done
+  for f in se dk de it sta at ch fr nl; do [ -s $D/in/$f.zip ] && ln -sf $D/in/$f.zip $f.zip; done
   $D/motis config *.zip >/dev/null
   sed -i 's/num_days: 365/num_days: 21/; s/with_shapes: true/with_shapes: false/; s/railviz: true/railviz: false/; s/merge_dupes_inter_src: false/merge_dupes_inter_src: true/; s/extend_missing_footpaths: false/extend_missing_footpaths: true/; s/link_stop_distance: 100/link_stop_distance: 300/' config.yml
   systemctl stop tagplan   # frigör minne under bygget

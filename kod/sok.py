@@ -30,8 +30,8 @@ GTFS_DIR = sys.argv[1] if len(sys.argv) > 1 else "/opt/tagplan/in"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8110
 PW_FILE = sys.argv[3] if len(sys.argv) > 3 else "/opt/tagplan/sok.losen"
 PASSWORD = open(PW_FILE).read().strip() if os.path.exists(PW_FILE) else None
-DATASETS = ("se", "dk", "de", "it", "sta", "at", "ch")
-LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Italien", "at": "Österrike", "ch": "Schweiz"}
+DATASETS = ("se", "dk", "de", "it", "sta", "at", "ch", "fr", "nl")
+LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Italien", "at": "Österrike", "ch": "Schweiz", "fr": "Frankrike", "nl": "Nederländerna"}
 HOME_TZ = "Europe/Stockholm"
 HUB_WORDS = {"c", "central", "centralstation", "hbf", "hauptbahnhof", "h", "centrale", "termini", "hovedbanegard"}
 
@@ -319,7 +319,7 @@ footer{max-width:880px;margin:0 auto 30px;padding:0 16px;font-size:12px;color:va
 </form>
 <div id="out"></div>
 </main>
-<footer>Tidtabeller: Trafiklab/Samtrafiken, Rejseplanen, DELFI/gtfs.de, Trenitalia, STA, ÖBB, opentransportdata.swiss · Tider i lokal tid vid varje station</footer>
+<footer>Tidtabeller: Trafiklab/Samtrafiken, Rejseplanen, DELFI/gtfs.de, Trenitalia, STA, ÖBB, opentransportdata.swiss, SNCF (ODbL), OVapi · Tider i lokal tid vid varje station</footer>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pick={fran:null,till:null}; let last=null, sortBy='arr';
