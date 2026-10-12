@@ -106,11 +106,16 @@ DAGAR = ("mån", "tis", "ons", "tor", "fre", "lör", "sön")
 def _dag(d): return f"{DAGAR[d.weekday()]} {d.day}/{d.month} {d:%H:%M}"
 def _hm(iso, tz): return _dag(P._loc(iso, tz))
 
+def _ms(iso): return int(P._t(iso).timestamp() * 1000)
+
 def _leg(l):
-    return {"from": l["from"]["name"], "to": l["to"]["name"], "dep": _hm(l["startTime"], l["from"].get("tz")),
-            "arr": _hm(l["endTime"], l["to"].get("tz")), "train": l.get("displayName") or "",
-            "agency": l.get("agencyName") or "", "url": l.get("agencyUrl") or "", "mode": l["mode"],
-            "day": P._loc(l["startTime"], l["from"].get("tz")).strftime("%Y-%m-%d")}
+    a, b = P._loc(l["startTime"], l["from"].get("tz")), P._loc(l["endTime"], l["to"].get("tz"))
+    return {"from": l["from"]["name"], "to": l["to"]["name"], "dep": _dag(a), "arr": _dag(b),
+            "train": l.get("displayName") or "", "agency": l.get("agencyName") or "", "url": l.get("agencyUrl") or "",
+            "mode": l["mode"], "day": a.strftime("%Y-%m-%d"), "t0": _ms(l["startTime"]), "t1": _ms(l["endTime"]),
+            "hm0": a.strftime("%H:%M"), "hm1": b.strftime("%H:%M"), "d0": a.strftime("%Y-%m-%d"), "d1": b.strftime("%Y-%m-%d"),
+            "track0": l["from"].get("track") or l["from"].get("scheduledTrack") or "",
+            "track1": l["to"].get("track") or l["to"].get("scheduledTrack") or ""}
 
 def to_json(res):
     opts = []
@@ -119,12 +124,14 @@ def to_json(res):
         s, e = P._loc(g["start"], tz0), P._loc(g["end"], tz1)
         tails = []
         for t in sorted(g["tails"], key=lambda t: P._t(t["end"])):
-            if t["legs"]: tails.append({"legs": [_leg(l) for l in t["legs"]], "arr": _hm(t["end"], t["legs"][-1]["to"].get("tz"))})
+            if t["legs"]: tails.append({"legs": [_leg(l) for l in t["legs"]], "arr": _hm(t["end"], t["legs"][-1]["to"].get("tz")), "t1": _ms(t["end"])})
         h = g["hotel"]
         opts.append({"kind": g["kind"], "dep": _dag(s), "arr": _dag(e),
                      "hours": round((e - s).total_seconds() / 3600, 1), "changes": len(L) - 1,
                      "legs": [_leg(l) for l in L[: g["last"] + 1]], "all": [_leg(l) for l in L], "tails": tails, "flags": g["flags"],
-                     "hotel": h and {"city": h["city"], "out": _dag(h["out"])}})
+                     "hotel": h and {"city": h["city"], "out": _dag(h["out"])},
+                     "t0": _ms(g["start"]), "t1": _ms(g["end"]), "hm0": s.strftime("%H:%M"), "hm1": e.strftime("%H:%M"),
+                     "d0": s.strftime("%Y-%m-%d"), "d1": e.strftime("%Y-%m-%d")})
     return {"options": opts, "rejected": sorted(set(res["rejected"]))}
 
 class H(BaseHTTPRequestHandler):
@@ -165,86 +172,261 @@ class H(BaseHTTPRequestHandler):
 PAGE = r"""<!doctype html>
 <html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Tågplaneraren</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231c3d5a'/%3E%3Cpath d='M10 8h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3zm0 4v4h12v-4zm1 7a1.5 1.5 0 1 0 0 .01zm10 0a1.5 1.5 0 1 0 0 .01zM11 23l-2 3m12-3 2 3' fill='%23fff' stroke='%23fff' stroke-width='1.2'/%3E%3C/svg%3E">
 <style>
-:root{--bg:#f6f5f2;--card:#fff;--fg:#1d1d1b;--mut:#6b6a66;--line:#e2e0da;--acc:#1f5f8b;--warn:#a5520f;--hot:#6b3fa0}
-@media (prefers-color-scheme:dark){:root{--bg:#161616;--card:#202020;--fg:#ecebe8;--mut:#9a9893;--line:#333;--acc:#6fb0e0;--warn:#e0a060;--hot:#b896e0}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,sans-serif}
-main{max-width:860px;margin:0 auto;padding:24px 16px 60px}h1{font-size:22px;margin:0 0 16px}
-form{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
-label{display:flex;flex-direction:column;font-size:12px;color:var(--mut);gap:4px;position:relative}
-input,button{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg)}
-button{grid-column:1/-1;background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer}button:disabled{opacity:.6}
-.sw{grid-column:1/-1;justify-self:start;background:none;color:var(--acc);padding:0;font-weight:400;font-size:13px}
-.sug{position:absolute;top:100%;left:0;right:0;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:7px;margin-top:2px;max-height:300px;overflow:auto;display:none}
-.sug div{padding:7px 10px;cursor:pointer;color:var(--fg);font-size:14px}.sug div small{color:var(--mut);margin-left:6px}
-.sug div:hover,.sug div.on{background:var(--bg)}
-.opt{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:12px}
-.head{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline}.kind{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:4px;background:var(--bg);color:var(--acc)}
-.kind.hotell{color:var(--hot)}.time{font-size:17px;font-weight:600}.meta{color:var(--mut);font-size:13px}
-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13.5px}td{padding:3px 6px 3px 0;vertical-align:top}td.t{white-space:nowrap;font-variant-numeric:tabular-nums}td.tr{color:var(--mut)}
-.hotel{color:var(--hot);font-weight:600;margin:4px 0}.tail{font-size:13px;margin-top:6px;color:var(--mut)}.flag{color:var(--warn);font-size:13px;margin-top:4px}
-.price{margin-top:8px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}.price a{color:var(--acc);border:1px solid var(--line);border-radius:6px;padding:3px 8px;text-decoration:none}.price a:hover{background:var(--bg)}
-.msg{margin-top:16px;color:var(--mut)}.rej{margin-top:18px;font-size:13px;color:var(--mut)}
-@media (max-width:560px){form{grid-template-columns:1fr}td.tr{display:none}}
-</style></head><body><main>
-<h1>Tågplaneraren</h1>
-<form id="f">
-  <label>Från<input id="fran" autocomplete="off" placeholder="t.ex. Stockholm C" required><div class="sug"></div></label>
-  <label>Till<input id="till" autocomplete="off" placeholder="t.ex. Bolzano" required><div class="sug"></div></label>
-  <label>Datum<input id="datum" type="date" required></label>
-  <label>Tid (svensk tid)<input id="tid" type="time" value="08:00" required></label>
-  <button type="button" class="sw" id="sw">⇅ byt håll</button>
-  <button id="go">Sök resa</button>
+:root{
+  --bg:#f3f1ec;--surface:#fff;--surface2:#f8f7f3;--fg:#1b1d21;--mut:#686c73;--faint:#9a9ea5;--line:#e4e1d9;
+  --brand:#1c3d5a;--brand2:#285a82;--accent:#d9622b;--ok:#2f7d4f;--warn:#b5621a;
+  --c-fast:#2563a8;--c-reg:#2a8f86;--c-night:#4a3f9c;--c-bus:#d08a1c;--c-other:#7b8794;--c-hotel:#8a4fb8;
+  --shadow:0 1px 2px rgba(20,24,30,.06),0 4px 16px rgba(20,24,30,.06);--r:14px}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#121417;--surface:#1b1e23;--surface2:#22262c;--fg:#eceef1;--mut:#a3a8b0;--faint:#757b84;--line:#2e333a;
+  --brand:#0f2133;--brand2:#7fb4e3;--accent:#f08a54;--ok:#6cc596;--warn:#e7a35d;
+  --c-fast:#5c9be0;--c-reg:#4fc0b5;--c-night:#8f84e6;--c-bus:#e8aa45;--c-other:#98a3ae;--c-hotel:#c08ae6;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+.hero{background:linear-gradient(135deg,#16324b 0%,#1c3d5a 45%,#2b5878 100%);color:#fff;padding:28px 16px 84px;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;inset:auto -10% -40px -10%;height:120px;background:radial-gradient(60% 100% at 50% 0,rgba(255,255,255,.08),transparent)}
+.wrap{max-width:880px;margin:0 auto}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;letter-spacing:-.01em}
+.brand svg{flex:none}
+.hero p{margin:6px 0 0 42px;color:rgba(255,255,255,.72);font-size:14px}
+main{max-width:880px;margin:-60px auto 60px;padding:0 16px;position:relative;z-index:1}
+.search{background:var(--surface);border-radius:18px;box-shadow:var(--shadow);padding:18px;display:grid;gap:12px}
+.places{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:end}
+.field{display:flex;flex-direction:column;gap:5px;position:relative;min-width:0}
+.field>span{font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.field input{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:11px;background:var(--surface2);outline:none;transition:border-color .15s,background .15s}
+.field input:focus{border-color:var(--brand2);background:var(--surface)}
+.swap{width:42px;height:42px;border-radius:50%;border:1.5px solid var(--line);background:var(--surface);cursor:pointer;display:grid;place-items:center;margin-bottom:2px;transition:transform .25s,border-color .15s}
+.swap:hover{border-color:var(--brand2);transform:rotate(180deg)}
+.when{display:grid;grid-template-columns:1fr 130px auto;gap:10px;align-items:end}
+.chips{display:flex;gap:6px;flex-wrap:wrap;grid-column:1/-1;margin-top:-2px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;font-size:13px;cursor:pointer;color:var(--mut)}
+.chip:hover{color:var(--fg);border-color:var(--faint)}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.go{height:46px;padding:0 26px;border:0;border-radius:11px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 2px 8px rgba(217,98,43,.3)}
+.go:disabled{opacity:.6;cursor:wait}
+.sug{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:20;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);max-height:320px;overflow:auto;display:none;padding:4px}
+.sug div{padding:9px 10px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;gap:10px}
+.sug div small{color:var(--faint);white-space:nowrap}
+.sug div.on,.sug div:hover{background:var(--surface2)}
+.bar-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:26px 2px 12px}
+.bar-head h2{margin:0;font-size:17px;letter-spacing:-.01em}
+.bar-head h2 small{display:block;font-weight:400;color:var(--mut);font-size:13px;margin-top:2px}
+.seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.seg button{border:0;background:none;padding:6px 10px;border-radius:7px;font-size:13px;color:var(--mut);cursor:pointer}
+.seg button.on{background:var(--brand);color:#fff}
+.card{background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden;border:1px solid transparent;transition:border-color .15s}
+.card:hover{border-color:var(--line)}
+.sum{padding:16px 18px 14px;cursor:pointer;display:grid;gap:12px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.times{font-size:24px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.times .arrow{color:var(--faint);font-weight:400}
+.times sup{font-size:12px;color:var(--accent);font-weight:700;margin-left:1px}
+.meta{color:var(--mut);font-size:13.5px;margin-top:3px}
+.meta b{color:var(--fg);font-weight:600}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;white-space:nowrap;background:var(--surface2);color:var(--mut)}
+.badge.nattåg{background:color-mix(in srgb,var(--c-night) 14%,transparent);color:var(--c-night)}
+.badge.hotell{background:color-mix(in srgb,var(--c-hotel) 14%,transparent);color:var(--c-hotel)}
+.badge.dagtåg{background:color-mix(in srgb,var(--c-fast) 12%,transparent);color:var(--c-fast)}
+.badge.nattbuss{background:color-mix(in srgb,var(--c-bus) 16%,transparent);color:var(--c-bus)}
+.track{position:relative;height:10px;border-radius:99px;background:repeating-linear-gradient(90deg,var(--line) 0 4px,transparent 4px 7px)}
+.track i{position:absolute;top:0;bottom:0;border-radius:99px;min-width:3px}
+.track i.h{background:repeating-linear-gradient(45deg,var(--c-hotel) 0 3px,color-mix(in srgb,var(--c-hotel) 40%,transparent) 3px 6px)}
+.ends{display:flex;justify-content:space-between;font-size:12.5px;color:var(--mut);gap:10px}
+.ends span:last-child{text-align:right}
+.ops{display:flex;flex-wrap:wrap;gap:6px}
+.op{font-size:12px;padding:3px 8px;border-radius:6px;background:var(--surface2);color:var(--mut);display:inline-flex;align-items:center;gap:6px}
+.op::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--dot,var(--c-other))}
+.more{font-size:13px;color:var(--brand2);font-weight:600;display:flex;align-items:center;gap:4px}
+.more svg{transition:transform .2s}
+.card.open .more svg{transform:rotate(180deg)}
+.det{display:none;border-top:1px solid var(--line);padding:6px 18px 16px;background:var(--surface2)}
+.card.open .det{display:block}
+.tl{list-style:none;margin:10px 0 0;padding:0}
+.st{display:grid;grid-template-columns:52px 22px 1fr;align-items:center;min-height:30px}
+.st .t{font-weight:700;font-variant-numeric:tabular-nums;font-size:14px}
+.st .t small{display:block;font-weight:400;color:var(--faint);font-size:11px;line-height:1}
+.st .n{font-weight:600}
+.st .n small{color:var(--faint);font-weight:400;margin-left:6px}
+.dot{width:12px;height:12px;border-radius:50%;border:2.5px solid var(--col,var(--fg));background:var(--surface);justify-self:center;z-index:1}
+.ride{display:grid;grid-template-columns:52px 22px 1fr;min-height:44px}
+.ride .ln{justify-self:center;width:4px;border-radius:2px;background:var(--col)}
+.ride .info{padding:6px 0;font-size:13.5px;color:var(--mut);display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.tn{font-weight:700;color:#fff;background:var(--col);padding:2px 8px;border-radius:6px;font-size:12.5px}
+.xfer{display:grid;grid-template-columns:52px 22px 1fr;min-height:34px}
+.xfer .ln{justify-self:center;width:0;border-left:3px dotted var(--faint)}
+.xfer .info{font-size:13px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.xfer.tight .info{color:var(--warn);font-weight:600}
+.xfer.hotel .ln{border-left-color:var(--c-hotel)}
+.xfer.hotel .info{color:var(--c-hotel);font-weight:700}
+.tails{margin-top:14px;padding:12px 14px;background:var(--surface);border:1px solid var(--line);border-radius:11px}
+.tails h4,.prices h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+.tail{font-size:13.5px;padding:5px 0;display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line)}
+.tail:first-of-type{border-top:0}
+.tail b{font-variant-numeric:tabular-nums}
+.flag{margin-top:10px;font-size:13px;color:var(--warn);display:flex;gap:6px;align-items:flex-start}
+.prices{margin-top:14px}
+.plist{display:flex;flex-wrap:wrap;gap:8px}
+.plist a{display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:13px;font-weight:600;padding:8px 12px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.plist a:hover{border-color:var(--brand2)}
+.plist a.sj{background:var(--brand);border-color:var(--brand);color:#fff}
+.plist a small{font-weight:400;opacity:.75}
+.msg{text-align:center;color:var(--mut);padding:40px 16px}
+.msg b{display:block;color:var(--fg);font-size:16px;margin-bottom:4px}
+.skel{height:150px;border-radius:var(--r);margin-bottom:12px;background:linear-gradient(90deg,var(--surface) 0%,var(--surface2) 50%,var(--surface) 100%);background-size:200% 100%;animation:sh 1.3s infinite linear}
+@keyframes sh{to{background-position:-200% 0}}
+details.rej{margin-top:18px;font-size:13px;color:var(--mut)}
+details.rej summary{cursor:pointer}
+details.rej ul{margin:8px 0 0;padding-left:18px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--mut);margin:-4px 2px 12px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend span::before{content:"";width:14px;height:6px;border-radius:9px;background:var(--dot)}
+footer{max-width:880px;margin:0 auto 30px;padding:0 16px;font-size:12px;color:var(--faint);text-align:center}
+@media (max-width:640px){
+  .places{grid-template-columns:1fr}
+  .swap{justify-self:end;margin:-6px 4px -6px 0;width:36px;height:36px;transform:rotate(90deg)}
+  .swap:hover{transform:rotate(270deg)}
+  .when{grid-template-columns:1fr 1fr}
+  .go{grid-column:1/-1;justify-content:center;order:2}
+  .chips{order:1}
+  .times{font-size:21px}
+  .seg button{padding:6px 8px;font-size:12px}
+}
+</style></head><body>
+<header class="hero"><div class="wrap">
+  <div class="brand"><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="rgba(255,255,255,.14)"/><path d="M10 7h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M8 13h16" stroke="#fff" stroke-width="1.8"/><circle cx="11.5" cy="18" r="1.4" fill="#fff"/><circle cx="20.5" cy="18" r="1.4" fill="#fff"/><path d="M11 22l-2.5 4M21 22l2.5 4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>Tågplaneraren</div>
+  <p>Tåg genom Europa – nattåg eller riktig hotellnatt, aldrig en natt på perrongen.</p>
+</div></header>
+<main>
+<form class="search" id="f" autocomplete="off">
+  <div class="places">
+    <label class="field"><span>Från</span><input id="fran" placeholder="Stad eller station" required><div class="sug"></div></label>
+    <button type="button" class="swap" id="sw" title="Byt håll" aria-label="Byt håll"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></svg></button>
+    <label class="field"><span>Till</span><input id="till" placeholder="Stad eller station" required><div class="sug"></div></label>
+  </div>
+  <div class="when">
+    <label class="field"><span>Datum</span><input id="datum" type="date" required></label>
+    <label class="field"><span>Avgång efter</span><input id="tid" type="time" value="08:00" required></label>
+    <button class="go" id="go"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Sök resa</button>
+    <div class="chips" id="chips"></div>
+  </div>
 </form>
 <div id="out"></div>
-</main><script>
-const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const pick={fran:null,till:null};
-$('#datum').value=new Date(Date.now()+864e5).toISOString().slice(0,10);
-try{const p=JSON.parse(localStorage.getItem('senaste')||'null');if(p){for(const k of['fran','till']){pick[k]=p[k];$('#'+k).value=p[k].name}}}catch(e){}
+</main>
+<footer>Tidtabeller: Trafiklab/Samtrafiken, Rejseplanen, DELFI/gtfs.de, Trenitalia, STA, ÖBB, opentransportdata.swiss · Tider i lokal tid vid varje station</footer>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pick={fran:null,till:null}; let last=null, sortBy='arr';
+const DAG=['sön','mån','tis','ons','tor','fre','lör'], MAN=['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'];
+const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const pretty=s=>{const d=new Date(s+'T12:00');return `${DAG[d.getDay()]} ${d.getDate()} ${MAN[d.getMonth()]}`};
+const dur=m=>{m=Math.round(m);const h=Math.floor(m/60),r=m%60;return h?`${h} h${r?` ${r} min`:''}`:`${r} min`};
+const dayDiff=(a,b)=>Math.round((new Date(b+'T12:00')-new Date(a+'T12:00'))/864e5);
+// datumknappar
+const today=new Date(); $('#datum').value=iso(new Date(+today+864e5));
+const CH=[['Idag',0],['Imorgon',1],['Om en vecka',7]];
+$('#chips').innerHTML=CH.map(([t,n])=>`<button type="button" class="chip" data-n="${n}">${t}</button>`).join('');
+const markChips=()=>document.querySelectorAll('#chips .chip').forEach(c=>c.classList.toggle('on',$('#datum').value==iso(new Date(+today+c.dataset.n*864e5))));
+$('#chips').onclick=e=>{const c=e.target.closest('.chip');if(!c)return;$('#datum').value=iso(new Date(+today+c.dataset.n*864e5));markChips()};
+$('#datum').onchange=markChips; markChips();
+try{const p=JSON.parse(localStorage.getItem('senaste')||'null');if(p&&p.fran&&p.till){for(const k of['fran','till']){pick[k]=p[k];$('#'+k).value=p[k].name}}}catch(e){}
+// stationsförslag
 for(const k of['fran','till']){
   const inp=$('#'+k), box=inp.nextElementSibling; let items=[], on=-1, timer;
-  const show=()=>{box.innerHTML=items.map((s,i)=>`<div class="${i==on?'on':''}" data-i="${i}">${esc(s.name)}<small>${esc(s.land)}</small></div>`).join('');box.style.display=items.length?'block':'none'};
+  const show=()=>{box.innerHTML=items.map((s,i)=>`<div class="${i==on?'on':''}" data-i="${i}"><span>${esc(s.name)}</span><small>${esc(s.land)}</small></div>`).join('');box.style.display=items.length?'block':'none'};
   const choose=i=>{pick[k]=items[i];inp.value=items[i].name;items=[];show()};
   inp.addEventListener('input',()=>{pick[k]=null;clearTimeout(timer);timer=setTimeout(async()=>{
-    items=await (await fetch('/api/stationer?q='+encodeURIComponent(inp.value))).json();on=items.length?0:-1;show()},150)});
+    try{items=await (await fetch('/api/stationer?q='+encodeURIComponent(inp.value))).json()}catch(e){items=[]}
+    on=items.length?0:-1;show()},140)});
+  inp.addEventListener('focus',()=>inp.select());
   inp.addEventListener('keydown',e=>{if(!items.length)return;
     if(e.key=='ArrowDown'){on=(on+1)%items.length;show();e.preventDefault()}
     else if(e.key=='ArrowUp'){on=(on-1+items.length)%items.length;show();e.preventDefault()}
     else if(e.key=='Enter'){choose(Math.max(on,0));e.preventDefault()}
     else if(e.key=='Escape'){items=[];show()}});
   box.addEventListener('mousedown',e=>{const d=e.target.closest('[data-i]');if(d){choose(+d.dataset.i);e.preventDefault()}});
-  inp.addEventListener('blur',()=>setTimeout(()=>{if(items.length&&!pick[k])choose(0);items=[];show()},100));
+  inp.addEventListener('blur',()=>setTimeout(()=>{if(items.length&&!pick[k])choose(0);items=[];show()},120));
 }
 $('#sw').onclick=()=>{[pick.fran,pick.till]=[pick.till,pick.fran];[$('#fran').value,$('#till').value]=[$('#till').value,$('#fran').value]};
-// Priser: SJ säljer biljetter för de här bolagen och visar dagens pris direkt i länken. Övriga bolag: deras egen sida.
+// färger och namn per trafikslag
+const MODE={HIGHSPEED_RAIL:['fast','Fjärrtåg'],LONG_DISTANCE:['fast','Fjärrtåg'],RAIL:['fast','Tåg'],NIGHT_RAIL:['night','Nattåg'],
+  REGIONAL_FAST_RAIL:['reg','Regionaltåg'],REGIONAL_RAIL:['reg','Regionaltåg'],SUBURBAN:['reg','Pendeltåg'],METRO:['other','Tunnelbana'],SUBWAY:['other','Tunnelbana'],
+  TRAM:['other','Spårvagn'],BUS:['bus','Buss'],COACH:['bus','Långfärdsbuss'],FERRY:['other','Färja'],FUNICULAR:['other','Bergbana'],AERIAL_LIFT:['other','Linbana']};
+const night=l=>l.t1-l.t0>=5*36e5&&(+l.hm0.slice(0,2)>=19||+l.hm1.slice(0,2)<=9);
+const kind=l=>{const k=(MODE[l.mode]||['other'])[0];return k!='bus'&&night(l)?'night':k=='reg'&&l.t1-l.t0>=3*36e5?'fast':k};
+const col=l=>`var(--c-${kind(l)})`;
+const modeName=l=>({night:'Nattåg',fast:(MODE[l.mode]||[])[0]=='fast'?MODE[l.mode][1]:'Fjärrtåg'})[kind(l)]||(MODE[l.mode]||['','Tåg'])[1];
+const nm=n=>String(n||'').replace(/^([^,]+), (\1\b.*)$/,'$2');
+const bolag=a=>a.replace(/ \((bvz|fo|Codesharing)\)/,'').replace(/ (AG|AB|SpA|S\.p\.A\.|GmbH|A\/S)\b.*$/,'').replace(' Personenverkehr','').replace(' Kundenservice','').trim();
+const KIND={dagtåg:['☀︎','Dagtåg'],nattåg:['☾','Nattåg'],hotell:['⌂','Hotellnatt'],nattbuss:['☾','Nattbuss']};
+// prislänkar: SJ visar dagens pris direkt; övriga bolag öppnar sin egen sida
 const SJ_SALJER=/^(SJ|Öresundståg|Skånetrafiken|Norrtåg|Mälartåg|Västtågen|Krösatågen|Tåg i Bergslagen)\b/i;
 const sjNamn=n=>n.replace(/\s+Centralstation$/,' Central').replace(/\s+C$/,' Central').replace(/^København H$/,'Köpenhamn H');
 function prisLankar(legs){
   const out=[]; let i=0;
   while(i<legs.length){
     if(SJ_SALJER.test(legs[i].agency)){let j=i;while(j+1<legs.length&&SJ_SALJER.test(legs[j+1].agency))j++;
-      out.push({t:`${legs[i].from} → ${legs[j].to} hos SJ`,u:`https://www.sj.se/sok-resa/valj-resa/${encodeURIComponent(sjNamn(legs[i].from))}/${encodeURIComponent(sjNamn(legs[j].to))}/${legs[i].day}`});i=j+1}
-    else{if(legs[i].url&&!out.some(o=>o.u==legs[i].url))out.push({t:`${legs[i].agency}`,u:legs[i].url});i++}
+      out.push({sj:1,t:`SJ`,s:`${sjNamn(legs[i].from)} – ${sjNamn(legs[j].to)}, pris direkt`,u:`https://www.sj.se/sok-resa/valj-resa/${encodeURIComponent(sjNamn(legs[i].from))}/${encodeURIComponent(sjNamn(legs[j].to))}/${legs[i].day}`});i=j+1}
+    else{if(legs[i].url&&!out.some(o=>o.u==legs[i].url))out.push({t:legs[i].agency,s:'bolagets sida',u:legs[i].url});i++}
   }
-  return out.length?`<div class="price">Priser: ${out.map(o=>`<a href="${esc(o.u)}" target="_blank" rel="noopener">${esc(o.t)}</a>`).join('')}</div>`:'';
+  return out.length?`<div class="prices"><h4>Priser och biljetter</h4><div class="plist">${out.map(o=>`<a class="${o.sj?'sj':''}" href="${esc(o.u)}" target="_blank" rel="noopener">${esc(o.t)} <small>${esc(o.s)}</small> ↗</a>`).join('')}</div></div>`:'';
 }
-const legRow=l=>`<tr><td class="t">${esc(l.dep)}</td><td>${esc(l.from)} → ${esc(l.to)}</td><td class="t">${esc(l.arr)}</td><td class="tr">${esc(l.train)} ${esc(l.agency)}</td></tr>`;
+function card(o,idx){
+  const L=o.all, T0=o.t0, span=Math.max(o.t1-T0,1), dd=dayDiff(o.d0,o.d1);
+  const segs=L.map(l=>`<i style="left:${(l.t0-T0)/span*100}%;width:${(l.t1-l.t0)/span*100}%;background:${col(l)}" title="${esc(l.train)} ${esc(nm(l.from))} → ${esc(nm(l.to))}"></i>`).join('')
+    +(o.hotel?(()=>{const k=L.findIndex(l=>l.to==o.hotel.city);if(k<0||k+1>=L.length)return'';const a=L[k].t1,b=L[k+1].t0;return `<i class="h" style="left:${(a-T0)/span*100}%;width:${(b-a)/span*100}%" title="Hotellnatt i ${esc(nm(o.hotel.city))}"></i>`})():'');
+  const ops=[...new Map(L.map(l=>[bolag(l.agency),l])).entries()].map(([b,l])=>`<span class="op" style="--dot:${col(l)}">${esc(b)}</span>`).join('');
+  // resplan
+  let tl='';
+  L.forEach((l,i)=>{
+    if(i==0)tl+=`<li class="st" style="--col:${col(l)}"><span class="t">${l.hm0}</span><span class="dot"></span><span class="n">${esc(nm(l.from))}${l.track0?`<small>spår ${esc(l.track0)}</small>`:''}</span></li>`;
+    tl+=`<li class="ride" style="--col:${col(l)}"><span></span><span class="ln"></span><span class="info"><span class="tn">${esc(l.train||modeName(l))}</span>${esc(modeName(l))} · ${esc(l.agency)} · ${dur((l.t1-l.t0)/6e4)}</span></li>`;
+    const nxt=L[i+1], d1=l.d1!=o.d0?`<small>${pretty(l.d1)}</small>`:'';
+    tl+=`<li class="st" style="--col:${col(l)}"><span class="t">${l.hm1}${d1}</span><span class="dot"></span><span class="n">${esc(nm(l.to))}${l.track1?`<small>spår ${esc(l.track1)}</small>`:''}</span></li>`;
+    if(nxt){const w=(nxt.t0-l.t1)/6e4, isHotel=o.hotel&&l.to==o.hotel.city;
+      tl+=`<li class="xfer ${isHotel?'hotel':w<8?'tight':''}"><span></span><span class="ln"></span><span class="info">${isHotel?`⌂ Hotellnatt i ${esc(nm(o.hotel.city))} · vidare ${esc(o.hotel.out)}`:`${w<8?'⚠︎ Kort byte':'Byte'}${nm(nxt.from)!=nm(l.to)?` till ${esc(nm(nxt.from))}`:''} · ${dur(w)}`}</span></li>`;
+      tl+=`<li class="st" style="--col:${col(nxt)}"><span class="t">${nxt.hm0}${nxt.d0!=l.d1?`<small>${pretty(nxt.d0)}</small>`:''}</span><span class="dot"></span><span class="n">${esc(nm(nxt.from))}${nxt.track0?`<small>spår ${esc(nxt.track0)}</small>`:''}</span></li>`}
+  });
+  const tails=o.tails.filter(t=>t.legs.length).length>1?`<div class="tails"><h4>Alternativ för sista biten</h4>${o.tails.filter(t=>t.legs.length).map(t=>`<div class="tail"><span>${t.legs.map(l=>`${l.hm0} ${esc(l.train||modeName(l))} till ${esc(nm(l.to))}`).join(' + ')}</span><b>framme ${esc(t.arr.slice(-5))}</b></div>`).join('')}</div>`:'';
+  const [ic,kn]=KIND[o.kind]||['',o.kind];
+  return `<article class="card" data-i="${idx}"><div class="sum" role="button" tabindex="0" aria-expanded="false">
+    <div class="top"><div><div class="times">${o.hm0}<span class="arrow">→</span>${o.hm1}${dd>0?`<sup>+${dd}</sup>`:''}</div>
+      <div class="meta"><b>${dur((o.t1-o.t0)/6e4)}</b> · ${o.changes==0?'direkt':o.changes==1?'1 byte':o.changes+' byten'} · ${pretty(o.d0)}</div></div>
+      <span class="badge ${esc(o.kind)}">${ic} ${esc(kn)}</span></div>
+    <div><div class="track">${segs}</div><div class="ends" style="margin-top:6px"><span>${esc(nm(L[0].from))}</span><span>${esc(nm(L[L.length-1].to))}</span></div></div>
+    <div class="top" style="align-items:center"><div class="ops">${ops}</div><span class="more">Resplan <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></span></div>
+    ${o.flags.map(f=>`<div class="flag">⚠︎ ${esc(f)}</div>`).join('')}
+  </div><div class="det"><ol class="tl">${tl}</ol>${tails}${prisLankar(L)}</div></article>`;
+}
+const SORT={arr:['Framme först',(a,b)=>a.t1-b.t1],dep:['Avgång',(a,b)=>a.t0-b.t0],dur:['Kortast',(a,b)=>(a.t1-a.t0)-(b.t1-b.t0)],chg:['Färst byten',(a,b)=>a.changes-b.changes||a.t1-b.t1]};
+function render(){
+  const d=last, out=$('#out');
+  if(!d.options.length){out.innerHTML=`<div class="msg"><b>Inga förslag det här dygnet</b>Prova en annan dag eller en tidigare avgångstid.</div>`;return}
+  const opts=[...d.options].sort(SORT[sortBy][1]);
+  out.innerHTML=`<div class="bar-head"><h2>${esc(pick.fran.name)} → ${esc(pick.till.name)}<small>${d.options.length} förslag · ${pretty($('#datum').value)} efter ${$('#tid').value}</small></h2>
+    <div class="seg">${Object.entries(SORT).map(([k,[t]])=>`<button type="button" data-s="${k}" class="${k==sortBy?'on':''}">${t}</button>`).join('')}</div></div>
+    <div class="legend"><span style="--dot:var(--c-fast)">Fjärrtåg</span><span style="--dot:var(--c-reg)">Regionaltåg</span><span style="--dot:var(--c-night)">Nattåg</span><span style="--dot:var(--c-bus)">Buss</span><span style="--dot:var(--c-hotel)">Hotellnatt</span></div>`
+    +opts.map(card).join('')
+    +(d.rejected.length?`<details class="rej"><summary>${d.rejected.length} förslag bortsorterade</summary><ul>${d.rejected.map(r=>`<li>${esc(r)}</li>`).join('')}</ul></details>`:'');
+}
+$('#out').addEventListener('click',e=>{
+  const s=e.target.closest('[data-s]'); if(s){sortBy=s.dataset.s;render();return}
+  const sum=e.target.closest('.sum'); if(sum&&!e.target.closest('a')){const c=sum.parentElement;c.classList.toggle('open');sum.setAttribute('aria-expanded',c.classList.contains('open'))}});
+$('#out').addEventListener('keydown',e=>{if((e.key=='Enter'||e.key==' ')&&e.target.classList.contains('sum')){e.preventDefault();e.target.click()}});
 $('#f').onsubmit=async e=>{e.preventDefault();const out=$('#out');
-  if(!pick.fran||!pick.till){out.innerHTML='<p class="msg">Välj station i listan för både Från och Till.</p>';return}
+  if(!pick.fran||!pick.till){out.innerHTML='<div class="msg"><b>Välj station i listan</b>Börja skriva i Från och Till och välj ett av förslagen.</div>';return}
   try{localStorage.setItem('senaste',JSON.stringify(pick))}catch(e){}
-  $('#go').disabled=true;out.innerHTML='<p class="msg">Söker … (kan ta en halv minut när hotellnätter räknas fram)</p>';
+  $('#go').disabled=true;out.innerHTML='<div class="bar-head"><h2>Söker …<small>Hotellnätter och sista biten räknas fram, det kan ta en halv minut.</small></h2></div>'+'<div class="skel"></div>'.repeat(3);
   try{const q=new URLSearchParams({fran:pick.fran.id,till:pick.till.id,datum:$('#datum').value,tid:$('#tid').value});
     const r=await fetch('/api/sok?'+q), d=await r.json(); if(!r.ok)throw new Error(d.error);
-    out.innerHTML=(d.options.length?'':'<p class="msg">Inga förslag hittades för det dygnet.</p>')+d.options.map(o=>{
-      let rows=o.legs.map(legRow).join('');
-      if(o.hotel)rows=o.legs.map(l=>legRow(l)+(l.to==o.hotel.city?`<tr><td colspan="4" class="hotel">🛏 Hotellnatt i ${esc(o.hotel.city)} – vidare ${esc(o.hotel.out)}</td></tr>`:'')).join('');
-      return `<div class="opt"><div class="head"><span class="kind ${o.kind}">${esc(o.kind)}</span><span class="time">${esc(o.dep)} → ${esc(o.arr)}</span>
-        <span class="meta">${o.hours} h · ${o.changes} byten</span></div><table>${rows}</table>
-        ${o.tails.map(t=>`<div class="tail">Sista biten: ${t.legs.map(l=>`${esc(l.dep.slice(-5))} ${esc(l.mode=='BUS'?'buss':l.mode=='REGIONAL_RAIL'?'regionaltåg':l.mode.toLowerCase())} ${esc(l.train)} till ${esc(l.to)}`).join(' + ')} → framme ${esc(t.arr.slice(-5))}</div>`).join('')}
-        ${o.flags.map(f=>`<div class="flag">OBS: ${esc(f)}</div>`).join('')}${prisLankar(o.all)}</div>`}).join('')
-      +(d.rejected.length?`<p class="rej">Bortsorterat: ${d.rejected.map(esc).join('; ')}</p>`:'');
-  }catch(err){out.innerHTML=`<p class="msg">Något gick fel: ${esc(err.message)}</p>`}
+    last=d; render(); const first=document.querySelector('.card'); if(first&&window.innerWidth>640)first.classList.add('open');
+  }catch(err){out.innerHTML=`<div class="msg"><b>Något gick fel</b>${esc(err.message)}</div>`}
   $('#go').disabled=false};
 </script></body></html>"""
 
