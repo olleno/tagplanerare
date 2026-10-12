@@ -16,3 +16,6 @@ Reseplanerare för tåg, regionaltåg och buss i Europa, dörr till dörr. Bygge
 - Frankrike: SNCF Voyageurs, TGV/Intercités/TER (ODbL)
 - Nederländerna: OVapi (gtfs.ovapi.nl)
 - Landsgränser: Natural Earth (public domain)
+
+## Licens
+MIT – se `LICENSE`. Tidtabellerna har sina egna licenser (se Datakällor).
