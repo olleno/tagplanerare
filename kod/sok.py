@@ -45,8 +45,11 @@ def load_stations():
     for ds in DATASETS:
         p = os.path.join(GTFS_DIR, ds + ".zip")
         if not os.path.exists(p): continue
-        with zipfile.ZipFile(p) as z:
-            rows = list(csv.DictReader(io.TextIOWrapper(z.open("stops.txt"), "utf-8-sig", newline="")))
+        try:
+            with zipfile.ZipFile(p) as z:
+                rows = list(csv.DictReader(io.TextIOWrapper(z.open("stops.txt"), "utf-8-sig", newline="")))
+        except Exception as e:   # t.ex. medan nattens bygge skriver om filen
+            print(f"hoppar över {ds}: {e}", flush=True); continue
         kids = {}
         for x in rows:
             if x.get("parent_station"): kids[x["parent_station"]] = kids.get(x["parent_station"], 0) + 1
@@ -173,13 +176,15 @@ PAGE = r"""<!doctype html>
 <html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Tågplaneraren</title>
 <meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231c3d5a'/%3E%3Cpath d='M10 8h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3zm0 4v4h12v-4zm1 7a1.5 1.5 0 1 0 0 .01zm10 0a1.5 1.5 0 1 0 0 .01zM11 23l-2 3m12-3 2 3' fill='%23fff' stroke='%23fff' stroke-width='1.2'/%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#f3f1ec;--surface:#fff;--surface2:#f8f7f3;--fg:#1b1d21;--mut:#686c73;--faint:#9a9ea5;--line:#e4e1d9;
   --brand:#1c3d5a;--brand2:#285a82;--accent:#d9622b;--ok:#2f7d4f;--warn:#b5621a;
   --c-fast:#2563a8;--c-reg:#2a8f86;--c-night:#4a3f9c;--c-bus:#d08a1c;--c-other:#7b8794;--c-hotel:#8a4fb8;
-  --shadow:0 1px 2px rgba(20,24,30,.06),0 4px 16px rgba(20,24,30,.06);--r:14px}
+  --shadow:0 1px 2px rgba(20,24,30,.05),0 8px 28px rgba(20,24,30,.07);--r:20px}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --bg:#121417;--surface:#1b1e23;--surface2:#22262c;--fg:#eceef1;--mut:#a3a8b0;--faint:#757b84;--line:#2e333a;
   --brand:#0f2133;--brand2:#7fb4e3;--accent:#f08a54;--ok:#6cc596;--warn:#e7a35d;
@@ -187,20 +192,39 @@ PAGE = r"""<!doctype html>
   --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
 *{box-sizing:border-box}
 html,body{margin:0}
-body{background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--fg);font:15px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
 button,input{font:inherit;color:inherit}
-.hero{background:linear-gradient(135deg,#16324b 0%,#1c3d5a 45%,#2b5878 100%);color:#fff;padding:28px 16px 84px;position:relative;overflow:hidden}
-.hero::after{content:"";position:absolute;inset:auto -10% -40px -10%;height:120px;background:radial-gradient(60% 100% at 50% 0,rgba(255,255,255,.08),transparent)}
-.wrap{max-width:880px;margin:0 auto}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;letter-spacing:-.01em}
+.hero{position:relative;color:#fff;min-height:520px;padding:22px 16px 150px;display:flex;flex-direction:column;isolation:isolate;overflow:hidden}
+.hero .bg{position:absolute;inset:0;z-index:-2;background:#1c3d5a center 62%/cover no-repeat;transform:scale(1.04);animation:zoom 24s ease-out forwards}
+@keyframes zoom{to{transform:scale(1)}}
+.hero::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(8,16,28,.5) 0%,rgba(8,16,28,.15) 55%,transparent 75%),linear-gradient(180deg,rgba(8,16,28,.55) 0%,rgba(8,16,28,.15) 38%,rgba(8,16,28,.35) 70%,var(--bg) 100%)}
+.wrap{max-width:1040px;margin:0 auto;width:100%}
+.nav{display:flex;justify-content:space-between;align-items:center}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:-.01em}
 .brand svg{flex:none}
-.hero p{margin:6px 0 0 42px;color:rgba(255,255,255,.72);font-size:14px}
-main{max-width:880px;margin:-60px auto 60px;padding:0 16px;position:relative;z-index:1}
-.search{background:var(--surface);border-radius:18px;box-shadow:var(--shadow);padding:18px;display:grid;gap:12px}
+.pill{font-size:12.5px;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.14);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.2)}
+.hero h1{font-family:"Instrument Serif",Georgia,serif;font-weight:400;font-size:clamp(44px,7.5vw,84px);line-height:.98;letter-spacing:-.02em;margin:64px 0 14px;max-width:760px;text-shadow:0 2px 30px rgba(0,0,0,.25)}
+.hero h1 em{font-style:italic;color:#ffd9b8}
+.hero p.lead{margin:0;max-width:520px;font-size:17px;color:rgba(255,255,255,.88);text-shadow:0 1px 12px rgba(0,0,0,.3)}
+main{max-width:1040px;margin:-120px auto 60px;padding:0 16px;position:relative;z-index:1}
+.search{background:color-mix(in srgb,var(--surface) 82%,transparent);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);border:1px solid color-mix(in srgb,var(--surface) 60%,transparent);border-radius:24px;box-shadow:0 20px 60px rgba(10,20,35,.18),0 2px 6px rgba(10,20,35,.06);padding:22px;display:grid;gap:14px}
+.sec{margin:44px 2px 14px;display:flex;justify-content:space-between;align-items:end;gap:12px}
+.sec h3{margin:0;font-family:"Instrument Serif",Georgia,serif;font-weight:400;font-size:34px;letter-spacing:-.01em;line-height:1}
+.sec span{color:var(--mut);font-size:13.5px}
+.dest{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(210px,1fr);gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;padding:2px 2px 14px;scrollbar-width:thin}
+.dc{position:relative;aspect-ratio:3/4;border-radius:20px;overflow:hidden;cursor:pointer;scroll-snap-align:start;border:0;padding:0;text-align:left;color:#fff;background:#223;box-shadow:var(--shadow)}
+.dc img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:transform .6s cubic-bezier(.2,.7,.2,1)}
+.dc:hover img,.dc:focus-visible img{transform:scale(1.06)}
+.dc::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,rgba(5,10,20,.75))}
+.dc div{position:absolute;left:16px;right:16px;bottom:14px;z-index:1}
+.dc b{display:block;font-family:"Instrument Serif",Georgia,serif;font-weight:400;font-size:30px;line-height:1}
+.dc small{opacity:.85;font-size:12.5px;display:flex;justify-content:space-between;margin-top:4px}
+.dc small i{font-style:normal;opacity:0;transform:translateX(-4px);transition:.25s}
+.dc:hover small i{opacity:1;transform:none}
 .places{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:end}
 .field{display:flex;flex-direction:column;gap:5px;position:relative;min-width:0}
 .field>span{font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
-.field input{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:11px;background:var(--surface2);outline:none;transition:border-color .15s,background .15s}
+.field input{width:100%;padding:13px 15px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface2);outline:none;transition:border-color .15s,background .15s}
 .field input:focus{border-color:var(--brand2);background:var(--surface)}
 .swap{width:42px;height:42px;border-radius:50%;border:1.5px solid var(--line);background:var(--surface);cursor:pointer;display:grid;place-items:center;margin-bottom:2px;transition:transform .25s,border-color .15s}
 .swap:hover{border-color:var(--brand2);transform:rotate(180deg)}
@@ -209,7 +233,7 @@ main{max-width:880px;margin:-60px auto 60px;padding:0 16px;position:relative;z-i
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;font-size:13px;cursor:pointer;color:var(--mut)}
 .chip:hover{color:var(--fg);border-color:var(--faint)}
 .chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
-.go{height:46px;padding:0 26px;border:0;border-radius:11px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 2px 8px rgba(217,98,43,.3)}
+.go{height:48px;padding:0 28px;border:0;border-radius:14px;background:linear-gradient(135deg,#e2703a,#c9521f);color:#fff;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 2px 8px rgba(217,98,43,.3)}
 .go:disabled{opacity:.6;cursor:wait}
 .sug{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:20;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);max-height:320px;overflow:auto;display:none;padding:4px}
 .sug div{padding:9px 10px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;gap:10px}
@@ -221,7 +245,7 @@ main{max-width:880px;margin:-60px auto 60px;padding:0 16px;position:relative;z-i
 .seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
 .seg button{border:0;background:none;padding:6px 10px;border-radius:7px;font-size:13px;color:var(--mut);cursor:pointer}
 .seg button.on{background:var(--brand);color:#fff}
-.card{background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden;border:1px solid transparent;transition:border-color .15s}
+.card{background:var(--surface);border-radius:20px;box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden;border:1px solid transparent;transition:border-color .15s}
 .card:hover{border-color:var(--line)}
 .sum{padding:16px 18px 14px;cursor:pointer;display:grid;gap:12px}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
@@ -287,7 +311,8 @@ details.rej ul{margin:8px 0 0;padding-left:18px}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--mut);margin:-4px 2px 12px}
 .legend span{display:inline-flex;align-items:center;gap:5px}
 .legend span::before{content:"";width:14px;height:6px;border-radius:9px;background:var(--dot)}
-footer{max-width:880px;margin:0 auto 30px;padding:0 16px;font-size:12px;color:var(--faint);text-align:center}
+footer a{color:inherit}
+footer{max-width:1040px;line-height:1.7;margin:0 auto 30px;padding:0 16px;font-size:12px;color:var(--faint);text-align:center}
 @media (max-width:640px){
   .places{grid-template-columns:1fr}
   .swap{justify-self:end;margin:-6px 4px -6px 0;width:36px;height:36px;transform:rotate(90deg)}
@@ -297,11 +322,15 @@ footer{max-width:880px;margin:0 auto 30px;padding:0 16px;font-size:12px;color:va
   .chips{order:1}
   .times{font-size:21px}
   .seg button{padding:6px 8px;font-size:12px}
+  .dest{grid-auto-columns:62%}
+  .dc b{font-size:26px}
 }
 </style></head><body>
-<header class="hero"><div class="wrap">
-  <div class="brand"><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="rgba(255,255,255,.14)"/><path d="M10 7h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M8 13h16" stroke="#fff" stroke-width="1.8"/><circle cx="11.5" cy="18" r="1.4" fill="#fff"/><circle cx="20.5" cy="18" r="1.4" fill="#fff"/><path d="M11 22l-2.5 4M21 22l2.5 4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>Tågplaneraren</div>
-  <p>Tåg genom Europa – nattåg eller riktig hotellnatt, aldrig en natt på perrongen.</p>
+<header class="hero"><div class="bg" style="background-image:url('https://thumb.wikimedia.org/wikipedia/commons/thumb/4/49/Bernina-Express_zwischen_Bernina-Lagalb_und_Ospizio_Bernina_%2810-2008%29.jpg/1920px-Bernina-Express_zwischen_Bernina-Lagalb_und_Ospizio_Bernina_%2810-2008%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail')"></div><div class="wrap">
+  <div class="nav"><div class="brand"><svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="rgba(255,255,255,.16)"/><path d="M10 7h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M8 13h16" stroke="#fff" stroke-width="1.8"/><circle cx="11.5" cy="18" r="1.4" fill="#fff"/><circle cx="20.5" cy="18" r="1.4" fill="#fff"/><path d="M11 22l-2.5 4M21 22l2.5 4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>Tågplaneraren</div>
+  <span class="pill">9 länder · bara räls</span></div>
+  <h1>Hela Europa,<br><em>på räls.</em></h1>
+  <p class="lead">Nattåg eller en riktig hotellnatt – aldrig en natt på perrongen. Sista biten med regionaltåg och buss.</p>
 </div></header>
 <main>
 <form class="search" id="f" autocomplete="off">
@@ -318,8 +347,9 @@ footer{max-width:880px;margin:0 auto 30px;padding:0 16px;font-size:12px;color:va
   </div>
 </form>
 <div id="out"></div>
+<section id="insp"><div class="sec"><h3>Vart vill du?</h3><span>Klicka på ett resmål</span></div><div class="dest" id="dest"></div></section>
 </main>
-<footer>Tidtabeller: Trafiklab/Samtrafiken, Rejseplanen, DELFI/gtfs.de, Trenitalia, STA, ÖBB, opentransportdata.swiss, SNCF (ODbL), OVapi · Tider i lokal tid vid varje station</footer>
+<footer>Foton från Wikimedia Commons: <a href="https://commons.wikimedia.org/wiki/File:Bernina-Express_zwischen_Bernina-Lagalb_und_Ospizio_Bernina_(10-2008).jpg" target="_blank" rel="noopener">Berninabanan</a>: JoachimKohler-HB, CC BY-SA 4.0 · <a href="https://commons.wikimedia.org/wiki/File:CH.VS.Zermatt_Sunnegga_Grindjisee_Matterhorn_9034_16x9-R_16K.jpg" target="_blank" rel="noopener">Zermatt</a>: Roy Egloff, CC BY-SA 4.0 · <a href="https://commons.wikimedia.org/wiki/File:2019_-_Wiener_Karlskirche_mit_Teich_und_%22Hill_Arches%22_Skulptur_am_Abend.jpg" target="_blank" rel="noopener">Wien</a>: Moahim, CC BY-SA 4.0 · <a href="https://commons.wikimedia.org/wiki/File:Eiffel_Tower_and_Pont_Alexandre_III_at_night.jpg" target="_blank" rel="noopener">Paris</a>: Getfunky Paris, CC BY 2.0 · <a href="https://commons.wikimedia.org/wiki/File:Canal_houses_and_Oude_Kerk_at_blue_hour_with_water_reflection_in_Damrak_Amsterdam_Netherlands.jpg" target="_blank" rel="noopener">Amsterdam</a>: Basile Morin, CC BY-SA 4.0 · <a href="https://commons.wikimedia.org/wiki/File:Langkofel_Schlern_%C3%BCber_Seis.jpg" target="_blank" rel="noopener">Bolzano</a>: Wolfgang Moroder, CC BY-SA 3.0 · <a href="https://commons.wikimedia.org/wiki/File:Nyhavn,_Copenhagen,_20220616_1932_6619.jpg" target="_blank" rel="noopener">Köpenhamn</a>: Jakub Hałun, CC BY-SA 4.0 · <a href="https://commons.wikimedia.org/wiki/File:Hamburg,_Speicherstadt,_Block_P_--_2016_--_3330-6.jpg" target="_blank" rel="noopener">Hamburg</a>: Dietmar Rabich, CC BY-SA 4.0<br>Tidtabeller: Trafiklab/Samtrafiken, Rejseplanen, DELFI/gtfs.de, Trenitalia, STA, ÖBB, opentransportdata.swiss, SNCF (ODbL), OVapi · Tider i lokal tid vid varje station</footer>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pick={fran:null,till:null}; let last=null, sortBy='arr';
@@ -336,6 +366,13 @@ const markChips=()=>document.querySelectorAll('#chips .chip').forEach(c=>c.class
 $('#chips').onclick=e=>{const c=e.target.closest('.chip');if(!c)return;$('#datum').value=iso(new Date(+today+c.dataset.n*864e5));markChips()};
 $('#datum').onchange=markChips; markChips();
 try{const p=JSON.parse(localStorage.getItem('senaste')||'null');if(p&&p.fran&&p.till){for(const k of['fran','till']){pick[k]=p[k];$('#'+k).value=p[k].name}}}catch(e){}
+// resmål
+const DEST=[{"namn": "Zermatt", "land": "Schweiz", "sok": "Zermatt", "bild": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/CH.VS.Zermatt_Sunnegga_Grindjisee_Matterhorn_9034_16x9-R_16K.jpg/1920px-CH.VS.Zermatt_Sunnegga_Grindjisee_Matterhorn_9034_16x9-R_16K.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"}, {"namn": "Wien", "land": "Österrike", "sok": "Wien Hbf", "bild": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/36/2019_-_Wiener_Karlskirche_mit_Teich_und_%22Hill_Arches%22_Skulptur_am_Abend.jpg/1920px-2019_-_Wiener_Karlskirche_mit_Teich_und_%22Hill_Arches%22_Skulptur_am_Abend.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"}, {"namn": "Paris", "land": "Frankrike", "sok": "Paris Gare de Lyon", "bild": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/de/Eiffel_Tower_and_Pont_Alexandre_III_at_night.jpg/1920px-Eiffel_Tower_and_Pont_Alexandre_III_at_night.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"}, {"namn": "Amsterdam", "land": "Nederländerna", "sok": "Amsterdam Centraal", "bild": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/44/Canal_houses_and_Oude_Kerk_at_blue_hour_with_water_reflection_in_Damrak_Amsterdam_Netherlands.jpg/1920px-Canal_houses_and_Oude_Kerk_at_blue_hour_with_water_reflection_in_Damrak_Amsterdam_Netherlands.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"}, {"namn": "Bolzano", "land": "Italien", "sok": "Bolzano", "bild": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b5/Langkofel_Schlern_%C3%BCber_Seis.jpg/1920px-Langkofel_Schlern_%C3%BCber_Seis.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"}, {"namn": "Köpenhamn", "land": "Danmark", "sok": "København H", "bild": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/Nyhavn%2C_Copenhagen%2C_20220616_1932_6619.jpg/1920px-Nyhavn%2C_Copenhagen%2C_20220616_1932_6619.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"}, {"namn": "Hamburg", "land": "Tyskland", "sok": "Hamburg Hbf", "bild": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/34/Hamburg%2C_Speicherstadt%2C_Block_P_--_2016_--_3330-6.jpg/1920px-Hamburg%2C_Speicherstadt%2C_Block_P_--_2016_--_3330-6.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"}];
+$('#dest').innerHTML=DEST.map((d,i)=>`<button type="button" class="dc" data-i="${i}"><img src="${d.bild}" alt="${esc(d.namn)}" loading="lazy"><div><b>${esc(d.namn)}</b><small><span>${esc(d.land)}</span><i>Sök →</i></small></div></button>`).join('');
+$('#dest').onclick=async e=>{const b=e.target.closest('.dc');if(!b)return;const d=DEST[b.dataset.i];
+  try{const r=await (await fetch('/api/stationer?q='+encodeURIComponent(d.sok))).json();if(!r.length)return;pick.till=r[0];$('#till').value=r[0].name}catch(err){return}
+  window.scrollTo({top:0,behavior:'smooth'});
+  if(pick.fran)$('#f').requestSubmit();else $('#fran').focus()};
 // stationsförslag
 for(const k of['fran','till']){
   const inp=$('#'+k), box=inp.nextElementSibling; let items=[], on=-1, timer;
