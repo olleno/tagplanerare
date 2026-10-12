@@ -3,6 +3,7 @@
 Reseplanerare för tåg, regionaltåg och buss i Europa, dörr till dörr. Bygger på sökmotorn [MOTIS](https://github.com/motis-project/motis) och öppna tidtabeller.
 
 - `server/tagplan.sh` – installerar och uppdaterar allt på servern (körs varje timme; bygger om tidtabellerna varje natt).
+- `kod/sok.py` – söksidan (port 8110, lösenordsskyddad): välj två valfria stationer, datum och tid.
 - `kod/planner_api.py` – sorterar bort dåliga förslag (aldrig natt på en station), bygger hotellnätter och visar alternativen för sista biten.
 
 ## Datakällor

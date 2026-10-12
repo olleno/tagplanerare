@@ -8,7 +8,7 @@ import json, urllib.request, urllib.parse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-MOTIS = "http://localhost:8080"
+MOTIS = "http://localhost:8100"
 NIGHT_START, NIGHT_END = 23 * 60 + 30, 5 * 60      # lokal tid: 23:30–05:00
 HOTEL_MIN_WAIT = 6 * 60                             # minst 6 h för att det ska vara en riktig hotellnatt
 HUB_MIN_DEPS = 120                                  # avgångar per dygn för att räknas som stad med hotell
