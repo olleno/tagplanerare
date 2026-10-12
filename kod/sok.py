@@ -3,6 +3,8 @@
 Körs:  python3 sok.py [GTFS-katalog] [port] [lösenordsfil]   (standard: /opt/tagplan/in 8110 /opt/tagplan/sok.losen)
 Lösenordsskydd: valfritt användarnamn, lösenordet står i lösenordsfilen. Saknas filen är sidan öppen.
 Stationslistan byggs från stops.txt i GTFS-filerna; MOTIS stopp-id blir "<dataset>_<stop_id>".
+Landet vid varje station tas från koordinaterna och landsgränserna i <GTFS-katalog>/lander.json, som skapas med
+  python3 sok.py --lander ne_10m_admin_0_countries.geojson <GTFS-katalog>/lander.json   (Natural Earth, fri att använda)
 """
 import base64, csv, hmac, io, json, os, sys, unicodedata, zipfile
 from datetime import datetime
@@ -13,12 +15,23 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import planner_api as P
 
+if __name__ == "__main__" and sys.argv[1:2] == ["--lander"]:   # gör om Natural Earth-filen till en liten Europa-fil
+    feats = [f for f in json.load(open(sys.argv[2]))["features"] if f["properties"].get("CONTINENT") == "Europe"]
+    out = []
+    for f in feats:
+        g = f["geometry"]; polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+        rings = [[[round(x, 4), round(y, 4)] for x, y in poly[0]] for poly in polys]   # bara yttre gränsen
+        xs = [x for r in rings for x, _ in r]; ys = [y for r in rings for _, y in r]
+        out.append({"name": f["properties"]["NAME_SV"], "bbox": [min(xs), min(ys), max(xs), max(ys)], "rings": rings})
+    out.sort(key=lambda c: (c["bbox"][2] - c["bbox"][0]) * (c["bbox"][3] - c["bbox"][1]))   # små länder först (San Marino före Italien)
+    json.dump(out, open(sys.argv[3], "w")); print(len(out), "länder sparade"); sys.exit()
+
 GTFS_DIR = sys.argv[1] if len(sys.argv) > 1 else "/opt/tagplan/in"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8110
 PW_FILE = sys.argv[3] if len(sys.argv) > 3 else "/opt/tagplan/sok.losen"
 PASSWORD = open(PW_FILE).read().strip() if os.path.exists(PW_FILE) else None
-DATASETS = ("se", "dk", "de", "it", "sta")
-LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Sydtyrolen"}
+DATASETS = ("se", "dk", "de", "it", "sta", "at", "ch")
+LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Italien", "at": "Österrike", "ch": "Schweiz"}
 HOME_TZ = "Europe/Stockholm"
 HUB_WORDS = {"c", "central", "centralstation", "hbf", "hauptbahnhof", "h", "centrale", "termini", "hovedbanegard"}
 
@@ -41,11 +54,34 @@ def load_stations():
             if x.get("parent_station") or x.get("location_type", "") not in ("", "0", "1"): continue
             n = _norm(x["stop_name"])
             big = kids.get(x["stop_id"], 0) + (20 if HUB_WORDS & set(n.replace(",", " ").replace("(", " ").split()) else 0)
-            out.append({"id": f"{ds}_{x['stop_id']}", "name": x["stop_name"], "land": LAND[ds], "big": big, "n": n})
+            try: pos = (float(x["stop_lon"]), float(x["stop_lat"]))
+            except (KeyError, ValueError): pos = None
+            out.append({"id": f"{ds}_{x['stop_id']}", "name": x["stop_name"], "ds": ds, "pos": pos, "big": big, "n": n})
     print(f"{len(out)} stationer inlästa från {GTFS_DIR}", flush=True)
     return out
 
 STATIONS = load_stations()
+
+try: COUNTRIES = json.load(open(os.path.join(GTFS_DIR, "lander.json")))
+except Exception: COUNTRIES = []
+
+def _inside(x, y, ring):
+    hit = False
+    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1): hit = not hit
+    return hit
+
+def country(s):
+    """Landet stationen ligger i (räknas ut först när stationen visas). Utanför kartan: tidtabellens land."""
+    if "land" not in s:
+        s["land"] = LAND[s["ds"]]
+        if s["pos"]:
+            x, y = s["pos"]
+            for c in COUNTRIES:
+                b = c["bbox"]
+                if b[0] <= x <= b[2] and b[1] <= y <= b[3] and any(_inside(x, y, r) for r in c["rings"]):
+                    s["land"] = c["name"]; break
+    return s["land"]
 
 def search_stations(q, n=12):
     q = _norm(q.strip())
@@ -60,7 +96,7 @@ def search_stations(q, n=12):
     hits.sort(key=lambda h: h[:4])
     seen, res = set(), []
     for *_, s in hits:
-        k = (s["name"], s["land"])
+        k = (s["n"], country(s))
         if k in seen: continue
         seen.add(k); res.append({"id": s["id"], "name": s["name"], "land": s["land"]})
         if len(res) >= n: break

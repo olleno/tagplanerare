@@ -11,3 +11,6 @@ Reseplanerare för tåg, regionaltåg och buss i Europa, dörr till dörr. Bygge
 - Danmark: Rejseplanen (CC BY 4.0)
 - Sverige: Trafiklab / Samtrafiken, GTFS Sverige 2 (CC0)
 - Italien: Trenitalia och STA Südtirol via BusOne
+- Österrike: ÖBB Open Data, GTFS Soll-Fahrplan (CC BY 4.0)
+- Schweiz: opentransportdata.swiss, Fahrplan GTFS
+- Landsgränser: Natural Earth (public domain)

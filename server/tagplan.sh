@@ -53,31 +53,41 @@ import zipfile,csv,io,sys
 csv.field_size_limit(10**9)
 src,dst=sys.argv[1],sys.argv[2]
 z=zipfile.ZipFile(src)
-def rd(n): return csv.reader(io.TextIOWrapper(z.open(n),'utf-8-sig',newline=''))
+names={n.rsplit('/',1)[-1]:n for n in z.namelist() if not n.endswith('/')}   # tål filer i en undermapp (ÖBB)
+def rd(n): return csv.reader(io.TextIOWrapper(z.open(names[n]),'utf-8-sig',newline=''))
 rail=lambda t: t in('1','2') or (t.isdigit() and (100<=int(t)<=117 or 400<=int(t)<=405))
 out=zipfile.ZipFile(dst,'w',zipfile.ZIP_DEFLATED)
-def w(n,rows):
-    b=io.StringIO();csv.writer(b,lineterminator='\n').writerows(rows);out.writestr(n,b.getvalue())
-r=rd('routes.txt');h=next(r);it=h.index('route_type');ir=h.index('route_id')
-routes=[h]+[x for x in r if rail(x[it])];keep_r={x[ir] for x in routes[1:]};w('routes.txt',routes)
-r=rd('trips.txt');h=next(r);ir=h.index('route_id');itr=h.index('trip_id');isv=h.index('service_id')
-trips=[h]+[x for x in r if x[ir] in keep_r];keep_t={x[itr] for x in trips[1:]};keep_s={x[isv] for x in trips[1:]}
-w('trips.txt',trips)
-stops=set()
-with out.open('stop_times.txt','w',force_zip64=True) as f:
-    t=io.TextIOWrapper(f,'utf-8',newline='');cw=csv.writer(t,lineterminator='\n')
-    r=rd('stop_times.txt');h=next(r);cw.writerow(h);a=h.index('trip_id');s=h.index('stop_id')
-    for x in r:
-        if x[a] in keep_t: cw.writerow(x);stops.add(x[s])
-    t.flush();t.detach()
+def stream(n,keep):  # skriver raderna där keep(rad) är sant, utan att hålla filen i minnet
+    with out.open(n,'w',force_zip64=True) as f:
+        t=io.TextIOWrapper(f,'utf-8',newline='');cw=csv.writer(t,lineterminator='\n')
+        r=rd(n);h=next(r);cw.writerow(h);k=keep(h)
+        for x in r:
+            if k(x): cw.writerow(x)
+        t.flush();t.detach()
+keep_r=set();keep_t=set();keep_s=set();stops=set()
+def f_routes(h):
+    it=h.index('route_type');ir=h.index('route_id')
+    def k(x):
+        if rail(x[it]): keep_r.add(x[ir]);return True
+    return k
+def f_trips(h):
+    ir=h.index('route_id');itr=h.index('trip_id');isv=h.index('service_id')
+    def k(x):
+        if x[ir] in keep_r: keep_t.add(x[itr]);keep_s.add(x[isv]);return True
+    return k
+def f_st(h):
+    a=h.index('trip_id');s=h.index('stop_id')
+    def k(x):
+        if x[a] in keep_t: stops.add(x[s]);return True
+    return k
+stream('routes.txt',f_routes);stream('trips.txt',f_trips);stream('stop_times.txt',f_st)
 r=rd('stops.txt');h=next(r);i=h.index('stop_id');p=h.index('parent_station') if 'parent_station' in h else None
 rows=list(r);par={x[p] for x in rows if p is not None and x[i] in stops and x[p]}
-w('stops.txt',[h]+[x for x in rows if x[i] in stops or x[i] in par])
+b=io.StringIO();csv.writer(b,lineterminator='\n').writerows([h]+[x for x in rows if x[i] in stops or x[i] in par]);out.writestr('stops.txt',b.getvalue())
 for n in ('calendar.txt','calendar_dates.txt'):
-    if n in z.namelist():
-        r=rd(n);h=next(r);k=h.index('service_id');w(n,[h]+[x for x in r if x[k] in keep_s])
+    if n in names: stream(n,lambda h:(lambda k:lambda x:x[k] in keep_s)(h.index('service_id')))
 for n in ('agency.txt','feed_info.txt','attributions.txt'):
-    if n in z.namelist(): out.writestr(n,z.read(n))
+    if n in names: out.writestr(n,z.read(names[n]))
 out.close()
 PY
 }
@@ -255,6 +265,8 @@ cat > $D/kod/sok.py <<'PYEOF'
 Körs:  python3 sok.py [GTFS-katalog] [port] [lösenordsfil]   (standard: /opt/tagplan/in 8110 /opt/tagplan/sok.losen)
 Lösenordsskydd: valfritt användarnamn, lösenordet står i lösenordsfilen. Saknas filen är sidan öppen.
 Stationslistan byggs från stops.txt i GTFS-filerna; MOTIS stopp-id blir "<dataset>_<stop_id>".
+Landet vid varje station tas från koordinaterna och landsgränserna i <GTFS-katalog>/lander.json, som skapas med
+  python3 sok.py --lander ne_10m_admin_0_countries.geojson <GTFS-katalog>/lander.json   (Natural Earth, fri att använda)
 """
 import base64, csv, hmac, io, json, os, sys, unicodedata, zipfile
 from datetime import datetime
@@ -265,12 +277,23 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import planner_api as P
 
+if __name__ == "__main__" and sys.argv[1:2] == ["--lander"]:   # gör om Natural Earth-filen till en liten Europa-fil
+    feats = [f for f in json.load(open(sys.argv[2]))["features"] if f["properties"].get("CONTINENT") == "Europe"]
+    out = []
+    for f in feats:
+        g = f["geometry"]; polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+        rings = [[[round(x, 4), round(y, 4)] for x, y in poly[0]] for poly in polys]   # bara yttre gränsen
+        xs = [x for r in rings for x, _ in r]; ys = [y for r in rings for _, y in r]
+        out.append({"name": f["properties"]["NAME_SV"], "bbox": [min(xs), min(ys), max(xs), max(ys)], "rings": rings})
+    out.sort(key=lambda c: (c["bbox"][2] - c["bbox"][0]) * (c["bbox"][3] - c["bbox"][1]))   # små länder först (San Marino före Italien)
+    json.dump(out, open(sys.argv[3], "w")); print(len(out), "länder sparade"); sys.exit()
+
 GTFS_DIR = sys.argv[1] if len(sys.argv) > 1 else "/opt/tagplan/in"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8110
 PW_FILE = sys.argv[3] if len(sys.argv) > 3 else "/opt/tagplan/sok.losen"
 PASSWORD = open(PW_FILE).read().strip() if os.path.exists(PW_FILE) else None
-DATASETS = ("se", "dk", "de", "it", "sta")
-LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Sydtyrolen"}
+DATASETS = ("se", "dk", "de", "it", "sta", "at", "ch")
+LAND = {"se": "Sverige", "dk": "Danmark", "de": "Tyskland", "it": "Italien", "sta": "Italien", "at": "Österrike", "ch": "Schweiz"}
 HOME_TZ = "Europe/Stockholm"
 HUB_WORDS = {"c", "central", "centralstation", "hbf", "hauptbahnhof", "h", "centrale", "termini", "hovedbanegard"}
 
@@ -293,11 +316,34 @@ def load_stations():
             if x.get("parent_station") or x.get("location_type", "") not in ("", "0", "1"): continue
             n = _norm(x["stop_name"])
             big = kids.get(x["stop_id"], 0) + (20 if HUB_WORDS & set(n.replace(",", " ").replace("(", " ").split()) else 0)
-            out.append({"id": f"{ds}_{x['stop_id']}", "name": x["stop_name"], "land": LAND[ds], "big": big, "n": n})
+            try: pos = (float(x["stop_lon"]), float(x["stop_lat"]))
+            except (KeyError, ValueError): pos = None
+            out.append({"id": f"{ds}_{x['stop_id']}", "name": x["stop_name"], "ds": ds, "pos": pos, "big": big, "n": n})
     print(f"{len(out)} stationer inlästa från {GTFS_DIR}", flush=True)
     return out
 
 STATIONS = load_stations()
+
+try: COUNTRIES = json.load(open(os.path.join(GTFS_DIR, "lander.json")))
+except Exception: COUNTRIES = []
+
+def _inside(x, y, ring):
+    hit = False
+    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1): hit = not hit
+    return hit
+
+def country(s):
+    """Landet stationen ligger i (räknas ut först när stationen visas). Utanför kartan: tidtabellens land."""
+    if "land" not in s:
+        s["land"] = LAND[s["ds"]]
+        if s["pos"]:
+            x, y = s["pos"]
+            for c in COUNTRIES:
+                b = c["bbox"]
+                if b[0] <= x <= b[2] and b[1] <= y <= b[3] and any(_inside(x, y, r) for r in c["rings"]):
+                    s["land"] = c["name"]; break
+    return s["land"]
 
 def search_stations(q, n=12):
     q = _norm(q.strip())
@@ -312,7 +358,7 @@ def search_stations(q, n=12):
     hits.sort(key=lambda h: h[:4])
     seen, res = set(), []
     for *_, s in hits:
-        k = (s["name"], s["land"])
+        k = (s["n"], country(s))
         if k in seen: continue
         seen.add(k); res.append({"id": s["id"], "name": s["name"], "land": s["land"]})
         if len(res) >= n: break
@@ -468,6 +514,10 @@ if __name__ == "__main__":
     print(f"Söksidan: http://0.0.0.0:{PORT}/ ({'lösenordsskyddad' if PASSWORD else 'UTAN lösenord'})", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
 PYEOF
+  if [ ! -s $D/in/lander.json ]; then   # landsgränser (Natural Earth, fri) så att varje station visar rätt land
+    curl -fsSL -o /tmp/ne.geojson https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson \
+      && python3 $D/kod/sok.py --lander /tmp/ne.geojson $D/in/lander.json; rm -f /tmp/ne.geojson
+  fi
   if [ ! -s $D/sok.losen ]; then   # skapas en gång; läs med: cat /opt/tagplan/sok.losen
     (umask 077; head -c 18 /dev/urandom | base64 | tr -d '/+=' > $D/sok.losen); echo "nytt lösenord för söksidan i $D/sok.losen"
   fi
@@ -497,11 +547,16 @@ build() {
   fetch dk https://www.rejseplanen.info/labs/GTFS.zip
   fetch it https://proxy.busone.app/trenitalia/gtfs.zip
   fetch sta https://proxy.busone.app/sta/gtfs.zip
+  # Österrike (ÖBB, CC BY 4.0) och Schweiz (opentransportdata.swiss): en fil per tidtabellsår, nytt år från 13 december
+  Y=$(date +%Y); [ "$(date +%m%d)" -ge 1213 ] && Y=$((Y+1))
+  fetch at-full "https://static.web.oebb.at/open-data/soll-fahrplan-gtfs/GTFS_Fahrplan_$Y.zip"
+  fetch ch-full "https://data.opentransportdata.swiss/dataset/timetable-$Y-gtfs2020/permalink"
   if [ -s $D/trafiklab.key ]; then fetch se "https://api.resrobot.se/gtfs/sweden.zip?key=$(cat $D/trafiklab.key)"; else fetch se "$SE_URL"; fi
   [ $D/in/de-full.zip -nt $D/in/de.zip ] && python3 $D/kod/filt.py $D/in/de-full.zip $D/in/de.zip && echo "Tyskland filtrerad"
+  for f in at ch; do [ $D/in/$f-full.zip -nt $D/in/$f.zip ] && nice python3 $D/kod/filt.py $D/in/$f-full.zip $D/in/$f.zip && echo "$f filtrerad"; done
   rm -rf $D/next && mkdir -p $D/next && cd $D/next
-  for f in se dk de it sta; do ln -sf $D/in/$f.zip $f.zip; done
-  $D/motis config se.zip dk.zip de.zip it.zip sta.zip >/dev/null
+  for f in se dk de it sta at ch; do [ -s $D/in/$f.zip ] && ln -sf $D/in/$f.zip $f.zip; done
+  $D/motis config *.zip >/dev/null
   sed -i 's/num_days: 365/num_days: 21/; s/with_shapes: true/with_shapes: false/; s/railviz: true/railviz: false/; s/merge_dupes_inter_src: false/merge_dupes_inter_src: true/; s/extend_missing_footpaths: false/extend_missing_footpaths: true/; s/link_stop_distance: 100/link_stop_distance: 300/' config.yml
   systemctl stop tagplan   # frigör minne under bygget
   if $D/motis import -d data >/dev/null 2>&1 && [ -s data/tt.bin ]; then
